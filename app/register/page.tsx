@@ -1,81 +1,64 @@
-import Link from "next/link";
-import { Mail, Lock, User, Zap } from "lucide-react";
-import type { Metadata } from "next";
-import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
-import { Card, CardContent } from "@/components/ui/Card";
+"use client";
 
-export const metadata: Metadata = { title: "Create Account" };
+import { useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 export default function RegisterPage() {
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  async function handleRegister() {
+
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+    });
+
+    console.log(data);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    alert("Check your email for confirmation");
+  }
+
   return (
-    <div className="page-container flex items-center justify-center min-h-[calc(100dvh-8rem)]">
-      <div className="w-full max-w-md animate-slide-up">
+    <main className="min-h-screen bg-black text-white flex items-center justify-center">
 
-        <div className="flex items-center gap-2 justify-center mb-8">
-          <div className="w-9 h-9 rounded-xl bg-gradient-brand flex items-center justify-center shadow-glow">
-            <Zap className="w-5 h-5 text-white" />
-          </div>
-          <span className="text-xl font-bold text-white">
-            Reward<span className="text-brand-400">ify</span>
-          </span>
-        </div>
+      <div className="w-full max-w-md bg-zinc-900 p-8 rounded-2xl space-y-4">
 
-        <Card>
-          <CardContent className="py-8">
-            <h1 className="text-xl font-bold text-white mb-1 text-center">Create your account</h1>
-            <p className="text-sm text-gray-500 text-center mb-6">
-              Start earning rewards in minutes — it&apos;s free
-            </p>
+        <h1 className="text-3xl font-bold text-center">
+          Cashora Register
+        </h1>
 
-            <div className="space-y-4">
-              <Input
-                label="Username"
-                type="text"
-                placeholder="cooluser123"
-                leftIcon={<User className="w-4 h-4" />}
-              />
-              <Input
-                label="Email address"
-                type="email"
-                placeholder="you@example.com"
-                leftIcon={<Mail className="w-4 h-4" />}
-              />
-              <Input
-                label="Password"
-                type="password"
-                placeholder="Min. 8 characters"
-                leftIcon={<Lock className="w-4 h-4" />}
-                hint="Use at least 8 characters, one uppercase and one number"
-              />
-              <Input
-                label="Confirm password"
-                type="password"
-                placeholder="••••••••"
-                leftIcon={<Lock className="w-4 h-4" />}
-              />
+        <input
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="w-full p-3 rounded-xl bg-zinc-800"
+        />
 
-              <p className="text-xs text-gray-600 leading-relaxed">
-                By creating an account you agree to our{" "}
-                <Link href="#" className="text-brand-400 hover:underline">Terms of Service</Link>
-                {" "}and{" "}
-                <Link href="#" className="text-brand-400 hover:underline">Privacy Policy</Link>.
-              </p>
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="w-full p-3 rounded-xl bg-zinc-800"
+        />
 
-              <Button className="w-full" size="md">
-                Create Account
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        <button
+          onClick={handleRegister}
+          className="w-full bg-green-600 py-3 rounded-xl font-bold"
+        >
+          Create Account
+        </button>
 
-        <p className="text-center text-sm text-gray-500 mt-4">
-          Already have an account?{" "}
-          <Link href="/login" className="text-brand-400 hover:text-brand-300 font-medium transition-colors">
-            Sign in
-          </Link>
-        </p>
       </div>
-    </div>
+
+    </main>
   );
 }
