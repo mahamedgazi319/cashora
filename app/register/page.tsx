@@ -7,22 +7,46 @@ export default function RegisterPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
+  const [message, setMessage] = useState("");
 
   async function handleRegister() {
+
+    setMessage("Starting register...");
 
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
     });
 
-    console.log(data);
-
     if (error) {
-      alert(error.message);
+      setMessage(error.message);
       return;
     }
 
-    alert("Check your email for confirmation");
+    if (!data.user) {
+      setMessage("User not created");
+      return;
+    }
+
+    setMessage("User created in auth");
+
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .insert([
+        {
+          id: data.user.id,
+          username: username,
+        },
+      ]);
+
+    if (profileError) {
+      setMessage(profileError.message);
+      return;
+    }
+
+    setMessage("Profile created successfully");
+
   }
 
   return (
@@ -33,6 +57,14 @@ export default function RegisterPage() {
         <h1 className="text-3xl font-bold text-center">
           Cashora Register
         </h1>
+
+        <input
+          type="text"
+          placeholder="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          className="w-full p-3 rounded-xl bg-zinc-800"
+        />
 
         <input
           type="email"
@@ -56,6 +88,10 @@ export default function RegisterPage() {
         >
           Create Account
         </button>
+
+        <p className="text-center text-sm text-yellow-400">
+          {message}
+        </p>
 
       </div>
 
