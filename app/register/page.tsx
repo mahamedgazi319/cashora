@@ -1,18 +1,19 @@
 "use client";
 
 import { useState } from "react";
-
 import Link from "next/link";
-
 import { supabase } from "@/lib/supabase";
 
 export default function RegisterPage() {
 
-  const [email, setEmail] = useState("");
+  const [email, setEmail] =
+    useState("");
 
-  const [password, setPassword] = useState("");
+  const [password, setPassword] =
+    useState("");
 
-  const [username, setUsername] = useState("");
+  const [username, setUsername] =
+    useState("");
 
   const [referralInput, setReferralInput] =
     useState("");
@@ -20,124 +21,277 @@ export default function RegisterPage() {
   const [hasReferral, setHasReferral] =
     useState(true);
 
-  const [message, setMessage] = useState("");
+  const [loading, setLoading] =
+    useState(false);
+
+  const [message, setMessage] =
+    useState("");
 
   function generateReferralCode() {
 
     const randomPart =
-      Math.random()
-        .toString(36)
-        .substring(2, 7);
+      crypto.randomUUID()
+        .replaceAll("-", "")
+        .slice(0, 10);
 
     return `cashora_${randomPart}`;
 
   }
 
+  function validateUsername(
+    value: string
+  ) {
+
+    const usernameRegex =
+      /^[a-zA-Z0-9_]{3,20}$/;
+
+    return usernameRegex.test(value);
+
+  }
+
+  function validatePassword(
+    value: string
+  ) {
+
+    return value.length >= 8;
+
+  }
+
   async function handleRegister() {
 
-    setMessage("");
+    try {
 
-    if (
-      !email ||
-      !password ||
-      !username
-    ) {
+      setLoading(true);
 
-      setMessage("Please fill all fields");
+      setMessage("");
 
-      return;
+      const normalizedEmail =
+        email
+          .trim()
+          .toLowerCase();
 
-    }
+      const normalizedUsername =
+        username.trim();
 
-    let referredBy = null;
-
-    let referralOwner = null;
-
-    if (hasReferral && referralInput) {
-
-      const {
-        data: referralUser,
-        error: referralError,
-      } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq(
-          "referral_code",
-          referralInput
-        )
-        .single();
+      const normalizedReferral =
+        referralInput.trim();
 
       if (
-        referralError ||
-        !referralUser
+        !normalizedEmail ||
+        !password ||
+        !normalizedUsername
       ) {
 
         setMessage(
-          "Invalid referral code"
+          "Please fill all fields"
         );
 
         return;
 
       }
 
-      referredBy = referralUser.id;
+      if (
+        !validateUsername(
+          normalizedUsername
+        )
+      ) {
 
-      referralOwner = referralUser;
+        setMessage(
+          "Username must be 3-20 characters and contain only letters, numbers, and underscores"
+        );
 
-    }
+        return;
 
-    const referralCode =
-      generateReferralCode();
+      }
 
-    const { data, error } =
-      await supabase.auth.signUp({
+      if (
+        !validatePassword(password)
+      ) {
 
-        email,
+        setMessage(
+          "Password must be at least 8 characters"
+        );
+
+        return;
+
+      }
+
+      /*
+        Check username uniqueness
+      */
+
+      const {
+        data: existingUsername,
+      } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq(
+          "username",
+          normalizedUsername
+        )
+        .maybeSingle();
+
+      if (existingUsername) {
+
+        setMessage(
+          "Username already taken"
+        );
+
+        return;
+
+      }
+
+      let referredBy = null;
+
+      let referralOwner = null;
+
+      /*
+        Validate referral code
+      */
+
+      if (
+        hasReferral &&
+        normalizedReferral
+      ) {
+
+        const {
+          data: referralUser,
+          error: referralError,
+        } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq(
+            "referral_code",
+            normalizedReferral
+          )
+          .single();
+
+        if (
+          referralError ||
+          !referralUser
+        ) {
+
+          setMessage(
+            "Invalid referral code"
+          );
+
+          return;
+
+        }
+
+        referredBy =
+          referralUser.id;
+
+        referralOwner =
+          referralUser;
+
+      }
+
+      /*
+        Create unique referral code
+      */
+
+      let referralCode =
+        generateReferralCode();
+
+      let isUnique = false;
+
+      while (!isUnique) {
+
+        const {
+          data: existingCode,
+        } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq(
+            "referral_code",
+            referralCode
+          )
+          .maybeSingle();
+
+        if (!existingCode) {
+
+          isUnique = true;
+
+        } else {
+
+          referralCode =
+            generateReferralCode();
+
+        }
+
+      }
+
+      /*
+        Create auth user
+      */
+
+      const {
+        data,
+        error,
+      } = await supabase.auth.signUp({
+
+        email: normalizedEmail,
+
         password,
 
       });
 
-    if (error) {
+      if (error) {
 
-      setMessage(error.message);
+        setMessage(error.message);
 
-      return;
+        return;
 
-    }
+      }
 
-    if (!data.user) {
+      if (!data.user) {
 
-      setMessage(
-        "User creation failed"
-      );
+        setMessage(
+          "User creation failed"
+        );
 
-      return;
+        return;
 
-    }
+      }
 
-    let starterCoins = 0;
+      /*
+        Starter bonus
+      */
 
-    if (referredBy) {
+      let starterCoins = 0;
 
-      starterCoins = 100;
+      if (referredBy) {
 
-    }
+        starterCoins = 100;
 
-    const { error: profileError } =
-      await supabase
+      }
+
+      /*
+        Create profile
+      */
+
+      const {
+        error: profileError,
+      } = await supabase
         .from("profiles")
         .insert([
 
           {
+
             id: data.user.id,
 
-            username: username,
+            username:
+              normalizedUsername,
 
-            referral_code: referralCode,
+            referral_code:
+              referralCode,
 
-            referred_by: referredBy,
+            referred_by:
+              referredBy,
 
-            task_coins: starterCoins,
+            task_coins:
+              starterCoins,
 
             referral_coins: 0,
 
@@ -145,7 +299,8 @@ export default function RegisterPage() {
 
             withdrawable_coins: 0,
 
-            total_coins: starterCoins,
+            total_coins:
+              starterCoins,
 
             referrals_count: 0,
 
@@ -154,99 +309,143 @@ export default function RegisterPage() {
             referral_bonus_given: false,
 
             task_requirement_completed: false,
+
           },
 
         ]);
 
-    if (profileError) {
-
-      setMessage(
-        profileError.message
-      );
-
-      return;
-
-    }
-
-    if (referredBy && referralOwner) {
-
-      const updatedLockedCoins =
-        referralOwner.locked_referral_coins + 250;
-
-      const updatedTotalCoins =
-        referralOwner.total_coins + 250;
-
-      const updatedReferralsCount =
-        referralOwner.referrals_count + 1;
-
-      const {
-        error: referralUpdateError,
-      } = await supabase
-        .from("profiles")
-        .update({
-
-          locked_referral_coins:
-            updatedLockedCoins,
-
-          total_coins:
-            updatedTotalCoins,
-
-          referrals_count:
-            updatedReferralsCount,
-
-        })
-        .eq(
-          "id",
-          referralOwner.id
-        );
-
-      if (referralUpdateError) {
+      if (profileError) {
 
         setMessage(
-          referralUpdateError.message
+          profileError.message
         );
 
         return;
 
       }
 
-      await supabase
-        .from("transactions")
-        .insert([
+      /*
+        Referral reward logic
+      */
 
-          {
-            user_id: referralOwner.id,
+      if (
+        referredBy &&
+        referralOwner
+      ) {
 
-            type: "referral_bonus",
+        const updatedLockedCoins =
+          (
+            referralOwner.locked_referral_coins || 0
+          ) + 250;
 
-            coins: 250,
+        const updatedTotalCoins =
+          (
+            referralOwner.total_coins || 0
+          ) + 250;
 
-            status: "locked",
+        const updatedReferralsCount =
+          (
+            referralOwner.referrals_count || 0
+          ) + 1;
 
-            description:
-              "Referral bonus locked",
-          },
+        const {
+          error: referralUpdateError,
+        } = await supabase
+          .from("profiles")
+          .update({
 
-          {
-            user_id: data.user.id,
+            locked_referral_coins:
+              updatedLockedCoins,
 
-            type: "welcome_bonus",
+            total_coins:
+              updatedTotalCoins,
 
-            coins: 100,
+            referrals_count:
+              updatedReferralsCount,
 
-            status: "completed",
+          })
+          .eq(
+            "id",
+            referralOwner.id
+          );
 
-            description:
-              "Referral signup bonus",
-          },
+        if (
+          referralUpdateError
+        ) {
 
-        ]);
+          console.log(
+            referralUpdateError
+          );
+
+        }
+
+        await supabase
+          .from("transactions")
+          .insert([
+
+            {
+
+              user_id:
+                referralOwner.id,
+
+              type:
+                "referral_bonus",
+
+              coins: 250,
+
+              status: "locked",
+
+              description:
+                "Referral bonus locked",
+
+            },
+
+            {
+
+              user_id:
+                data.user.id,
+
+              type:
+                "welcome_bonus",
+
+              coins: 100,
+
+              status: "completed",
+
+              description:
+                "Referral signup bonus",
+
+            },
+
+          ]);
+
+      }
+
+      setMessage(
+        "Account created successfully"
+      );
+
+      setEmail("");
+
+      setPassword("");
+
+      setUsername("");
+
+      setReferralInput("");
+
+    } catch (error) {
+
+      console.log(error);
+
+      setMessage(
+        "Unexpected error occurred"
+      );
+
+    } finally {
+
+      setLoading(false);
 
     }
-
-    setMessage(
-      "Account created successfully"
-    );
 
   }
 
@@ -254,10 +453,12 @@ export default function RegisterPage() {
 
     <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
 
-      <div className="w-full max-w-md bg-zinc-900 p-8 rounded-2xl space-y-6">
+      <div className="w-full max-w-md bg-zinc-900 p-8 rounded-2xl space-y-6 shadow-xl">
 
         <h1 className="text-4xl font-bold text-center">
+
           Create Account
+
         </h1>
 
         <div className="space-y-4">
@@ -267,9 +468,11 @@ export default function RegisterPage() {
             placeholder="Username"
             value={username}
             onChange={(e) =>
-              setUsername(e.target.value)
+              setUsername(
+                e.target.value
+              )
             }
-            className="w-full p-3 rounded-xl bg-zinc-800"
+            className="w-full p-3 rounded-xl bg-zinc-800 outline-none border border-zinc-700 focus:border-green-500"
           />
 
           <input
@@ -277,9 +480,11 @@ export default function RegisterPage() {
             placeholder="Email"
             value={email}
             onChange={(e) =>
-              setEmail(e.target.value)
+              setEmail(
+                e.target.value
+              )
             }
-            className="w-full p-3 rounded-xl bg-zinc-800"
+            className="w-full p-3 rounded-xl bg-zinc-800 outline-none border border-zinc-700 focus:border-green-500"
           />
 
           <input
@@ -287,9 +492,11 @@ export default function RegisterPage() {
             placeholder="Password"
             value={password}
             onChange={(e) =>
-              setPassword(e.target.value)
+              setPassword(
+                e.target.value
+              )
             }
-            className="w-full p-3 rounded-xl bg-zinc-800"
+            className="w-full p-3 rounded-xl bg-zinc-800 outline-none border border-zinc-700 focus:border-green-500"
           />
 
           {hasReferral && (
@@ -303,7 +510,7 @@ export default function RegisterPage() {
                   e.target.value
                 )
               }
-              className="w-full p-3 rounded-xl bg-zinc-800"
+              className="w-full p-3 rounded-xl bg-zinc-800 outline-none border border-zinc-700 focus:border-green-500"
             />
 
           )}
@@ -325,16 +532,27 @@ export default function RegisterPage() {
 
           <button
             onClick={handleRegister}
-            className="w-full bg-green-600 py-3 rounded-xl font-bold"
+            disabled={loading}
+            className="w-full bg-green-600 hover:bg-green-700 transition-colors py-3 rounded-xl font-bold disabled:opacity-50"
           >
-            Create Account
+
+            {loading
+              ? "Creating account..."
+              : "Create Account"}
+
           </button>
 
         </div>
 
-        <p className="text-center text-yellow-400">
-          {message}
-        </p>
+        {message && (
+
+          <p className="text-center text-yellow-400 text-sm">
+
+            {message}
+
+          </p>
+
+        )}
 
         <div className="text-center">
 
@@ -342,7 +560,9 @@ export default function RegisterPage() {
             href="/login"
             className="text-blue-400"
           >
+
             Already have account?
+
           </Link>
 
         </div>
