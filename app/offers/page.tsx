@@ -1,20 +1,10 @@
 "use client";
 
-import {
-  Layers,
-  Search,
-  Filter,
-  Coins,
-} from "lucide-react";
-
+import { Layers, Search, Filter, Coins } from "lucide-react";
 import { useEffect, useState } from "react";
-
 import Link from "next/link";
-
 import { Card, CardContent } from "@/components/ui/Card";
-
 import { Badge } from "@/components/ui/Badge";
-
 import { supabase } from "@/lib/supabase";
 
 interface Task {
@@ -25,37 +15,159 @@ interface Task {
   url: string;
 }
 
+type TaskStatus = {
+  status: "pending" | "completed";
+  started_at?: string | null;
+  completed_at?: string | null;
+  rowId?: number;
+};
+
 export default function OffersPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [message, setMessage] = useState("");
   const [userId, setUserId] = useState("");
+  const [taskStatuses, setTaskStatuses] = useState<Record<number, TaskStatus>>(
+    {}
+  );
 
   useEffect(() => {
     async function loadData() {
-      const { data: userData } = await supabase.auth.getUser();
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+
+      if (userError) {
+        console.log(userError);
+        return;
+      }
 
       if (userData.user) {
         setUserId(userData.user.id);
       }
 
-      const { data, error } = await supabase
+      const { data: taskData, error: taskError } = await supabase
         .from("tasks")
         .select("*")
         .eq("active", true)
         .order("id", { ascending: false });
 
-      if (error) {
-        console.log(error);
+      if (taskError) {
+        console.log(taskError);
         return;
       }
 
-      if (data) {
-        setTasks(data);
+      if (taskData) {
+        setTasks(taskData);
+      }
+
+      if (userData.user) {
+        const { data: completedData, error: completedError } = await supabase
+          .from("completed_tasks")
+          .select("*")
+          .eq("user_id", userData.user.id);
+
+        if (completedError) {
+          console.log(completedError);
+          return;
+        }
+
+        const statusMap: Record<number, TaskStatus> = {};
+
+        (completedData || []).forEach((row: any) => {
+          const existing = statusMap[row.task_id];
+
+          if (!existing) {
+            statusMap[row.task_id] = {
+              status: row.status === "completed" ? "completed" : "pending",
+              started_at: row.started_at || null,
+              completed_at: row.completed_at || null,
+              rowId: row.id,
+            };
+            return;
+          }
+
+          if (row.status === "completed") {
+            statusMap[row.task_id] = {
+              status: "completed",
+              started_at: row.started_at || existing.started_at || null,
+              completed_at: row.completed_at || existing.completed_at || null,
+              rowId: row.id,
+            };
+            return;
+          }
+
+          if (
+            existing.status !== "completed" &&
+            row.started_at &&
+            (!existing.started_at ||
+              new Date(row.started_at).getTime() >
+                new Date(existing.started_at).getTime())
+          ) {
+            statusMap[row.task_id] = {
+              status: "pending",
+              started_at: row.started_at,
+              completed_at: row.completed_at || null,
+              rowId: row.id,
+            };
+          }
+        });
+
+        setTaskStatuses(statusMap);
       }
     }
 
     loadData();
   }, []);
+
+  async function startTask(task: Task) {
+    if (!userId) {
+      setMessage("Login required");
+      return;
+    }
+
+    const currentStatus = taskStatuses[task.id];
+
+    if (currentStatus?.status === "completed") {
+      setMessage("Task already completed");
+      return;
+    }
+
+    if (currentStatus?.status === "pending") {
+      setMessage("Task already started");
+      return;
+    }
+
+    const startedAt = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from("completed_tasks")
+      .insert([
+        {
+          user_id: userId,
+          task_id: task.id,
+          reward: task.reward,
+          status: "pending",
+          provider: "internal",
+          started_at: startedAt,
+        },
+      ])
+      .select("*")
+      .single();
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setTaskStatuses((prev) => ({
+      ...prev,
+      [task.id]: {
+        status: "pending",
+        started_at: data?.started_at || startedAt,
+        rowId: data?.id,
+      },
+    }));
+
+    setMessage("Task started successfully");
+  }
 
   async function completeTask(task: Task) {
     if (!userId) {
@@ -63,37 +175,63 @@ export default function OffersPage() {
       return;
     }
 
-    const { data: existingTask, error: existingError } = await supabase
+    const currentStatus = taskStatuses[task.id];
+
+    if (!currentStatus || currentStatus.status !== "pending") {
+      setMessage("Start the task first");
+      return;
+    }
+
+    const startedAt = currentStatus.started_at;
+
+    if (!startedAt) {
+      setMessage("Task start time not found");
+      return;
+    }
+
+    const startedMs = new Date(startedAt).getTime();
+    const nowMs = new Date().getTime();
+    const secondsPassed = (nowMs - startedMs) / 1000;
+
+    if (secondsPassed < 30) {
+      const remainingSeconds = Math.ceil(30 - secondsPassed);
+      setMessage(`Please wait ${remainingSeconds} more seconds`);
+      return;
+    }
+
+    const { data: pendingRows, error: pendingError } = await supabase
       .from("completed_tasks")
       .select("*")
       .eq("user_id", userId)
       .eq("task_id", task.id)
-      .maybeSingle();
+      .eq("status", "pending")
+      .order("started_at", { ascending: false })
+      .limit(1);
 
-    if (existingError) {
-      setMessage(existingError.message);
+    if (pendingError) {
+      setMessage(pendingError.message);
       return;
     }
 
-    if (existingTask) {
-      setMessage("Task already completed");
+    const pendingTask = pendingRows?.[0];
+
+    if (!pendingTask) {
+      setMessage("No pending task found");
       return;
     }
 
-    const { error: completedError } = await supabase
+    const completedAt = new Date().toISOString();
+
+    const { error: updateTaskError } = await supabase
       .from("completed_tasks")
-      .insert([
-        {
-          user_id: userId,
-          task_id: task.id,
-          reward: task.reward,
-          status: "completed",
-          provider: "internal",
-        },
-      ]);
+      .update({
+        status: "completed",
+        completed_at: completedAt,
+      })
+      .eq("id", pendingTask.id);
 
-    if (completedError) {
-      setMessage(completedError.message);
+    if (updateTaskError) {
+      setMessage(updateTaskError.message);
       return;
     }
 
@@ -116,7 +254,7 @@ export default function OffersPage() {
     const updatedTaskCoins = (profileData.task_coins || 0) + task.reward;
     const updatedTotalCoins = (profileData.total_coins || 0) + task.reward;
 
-    const { error: updateError } = await supabase
+    const { error: profileUpdateError } = await supabase
       .from("profiles")
       .update({
         task_coins: updatedTaskCoins,
@@ -124,8 +262,8 @@ export default function OffersPage() {
       })
       .eq("id", userId);
 
-    if (updateError) {
-      setMessage(updateError.message);
+    if (profileUpdateError) {
+      setMessage(profileUpdateError.message);
       return;
     }
 
@@ -145,6 +283,16 @@ export default function OffersPage() {
       setMessage(transactionError.message);
       return;
     }
+
+    setTaskStatuses((prev) => ({
+      ...prev,
+      [task.id]: {
+        status: "completed",
+        started_at: currentStatus.started_at,
+        completed_at: completedAt,
+        rowId: pendingTask.id,
+      },
+    }));
 
     setMessage(`Task completed successfully +${task.reward} Coins`);
   }
@@ -179,45 +327,68 @@ export default function OffersPage() {
 
       {tasks.length > 0 ? (
         <div className="grid gap-4">
-          {tasks.map((task) => (
-            <Card key={task.id} hover>
-              <CardContent className="p-6">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-xl font-bold text-white">{task.title}</h2>
-                      <Badge variant="warning">Offer</Badge>
+          {tasks.map((task) => {
+            const state = taskStatuses[task.id];
+
+            return (
+              <Card key={task.id} hover>
+                <CardContent className="p-6">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-xl font-bold text-white">{task.title}</h2>
+                        <Badge variant="warning">Offer</Badge>
+                        {state?.status === "pending" && (
+                          <Badge variant="warning">Pending</Badge>
+                        )}
+                        {state?.status === "completed" && (
+                          <Badge variant="success">Completed</Badge>
+                        )}
+                      </div>
+
+                      <p className="text-gray-400 text-sm">{task.description}</p>
                     </div>
 
-                    <p className="text-gray-400 text-sm">{task.description}</p>
-                  </div>
+                    <div className="flex flex-col gap-3">
+                      <div className="flex items-center gap-2 text-yellow-400 font-bold text-lg">
+                        <Coins className="w-5 h-5" />
+                        {task.reward}
+                      </div>
 
-                  <div className="flex flex-col gap-3">
-                    <div className="flex items-center gap-2 text-yellow-400 font-bold text-lg">
-                      <Coins className="w-5 h-5" />
-                      {task.reward}
+                      <a
+                        href={task.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-brand-500 hover:bg-brand-600 transition-colors px-5 py-2 rounded-xl font-bold text-white text-center"
+                      >
+                        Start Task
+                      </a>
+
+                      <button
+                        onClick={() => startTask(task)}
+                        disabled={state?.status === "pending" || state?.status === "completed"}
+                        className="bg-blue-600 hover:bg-blue-700 transition-colors px-5 py-2 rounded-xl font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {state?.status === "completed"
+                          ? "Completed"
+                          : state?.status === "pending"
+                            ? "Task Started"
+                            : "Start Task"}
+                      </button>
+
+                      <button
+                        onClick={() => completeTask(task)}
+                        disabled={state?.status !== "pending"}
+                        className="bg-green-600 hover:bg-green-700 transition-colors px-5 py-2 rounded-xl font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Complete Task
+                      </button>
                     </div>
-
-                    <a
-                      href={task.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="bg-brand-500 hover:bg-brand-600 transition-colors px-5 py-2 rounded-xl font-bold text-white text-center"
-                    >
-                      Start Task
-                    </a>
-
-                    <button
-                      onClick={() => completeTask(task)}
-                      className="bg-green-600 hover:bg-green-700 transition-colors px-5 py-2 rounded-xl font-bold text-white"
-                    >
-                      Complete Task
-                    </button>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       ) : (
         <Card>
